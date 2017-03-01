@@ -996,7 +996,7 @@ int main(int argc, char *argv[]){
 	        {"sep",			required_argument,		0, 'S'},
 	        {"defaults",		no_argument,       		0, 'd'},
 	        {"background",		required_argument,		0, 'b'},
-	        {"background_function",	required_argument,		0, 'B'},
+	        {"background_function",	no_argument,			0, 'B'},
 	        {"map",			required_argument,		0, 'M'},
 	        {"list",		no_argument,       		0, 'l'},
 	        {"add",			no_argument,			0, 'L'},
@@ -1007,6 +1007,7 @@ int main(int argc, char *argv[]){
 	        {"auto_output",		no_argument,			0, 'O'},
 	        {"version",		no_argument,			0, 'v'},
 	        {"help",		no_argument,       		0, 'h'},
+		{0,         		0,                 		0,  0 }
 		};
 
 	////////////////// get arguments
@@ -1082,8 +1083,8 @@ int main(int argc, char *argv[]){
 			newBackName = optarg;
 			break;
 		case 'B': // --background_function <FILE> <STRING>
-			if(optind < argc && *argv[optind] != '-'){ newBackName = argv[optind++];  }else{ cerr << redErr << "  Error Create argument\n" << resetErr; return 1; }
-			if(optind < argc && *argv[optind] != '-'){ backFunction = argv[optind++]; }else{ cerr << redErr << "  Error Create argument\n" << resetErr; return 1; }
+			if(optind < argc && *argv[optind] != '-'){ newBackName = argv[optind++];  }else{ cerr << redErr << "  Error background argument\n" << resetErr; return 1; }
+			if(optind < argc && *argv[optind] != '-'){ backFunction = argv[optind++]; }else{ cerr << redErr << "  Error background argument\n" << resetErr; return 1; }
 			break;
 		case 'M': // --map <STRING>
 			mapID = optarg;
@@ -1125,6 +1126,9 @@ int main(int argc, char *argv[]){
 			return 0;
 		case 'h': // --help
 			cout << usage;
+			return 0;
+		default: 
+			cerr << "Error argument" << endl;
 			return 0;
 		}
 	}
