@@ -561,15 +561,26 @@ void add_file_label(const string fileName, const string label){
 	if( rename(tmpFileName.c_str(), fileName.c_str()) != 0){ cerr << redErr << "  Error renaming file: " << tmpFileName << " to: " << fileName << endl << resetErr; exit(5); }
 }
 
+size_t write_data(void *buffer, size_t size, size_t nmemb, void *userp) 		// used with curl to prevent output, when only redirect is used
+{ return size * nmemb; }
+
 string map_ids(const string fileName, const string mapID){
 	string tmpFileName = fileName + ".tmp";
 	string outFileName = fileName + ".acc";
-	string ID, IDlist, currentID, newID, url, line, filters;
+	bool filterMessage = false;
+	char *redUrl;
+	string list, ID, ID1, ID2, url, line;
+	string IDstring = "";
+	string filters = "+";
+	string currentID = "";
+	CURL* c;
+	CURLcode err;
+	boost::regex exp("http://www.uniprot.org/mapping/([A-Z0-9]*?).tab");
+	boost::smatch match;
 	vector <string> IDs;
 	vector <string> IDsBuff;
-	vector <string> newIDs;
-	vector <string> moreIDs;
-	bool addFilter = false;
+	vector <string> currentMaps;
+
 	ifstream file(fileName.c_str());
 		if(! file){ cout << redErr << "  Error reading ID file: " << fileName << endl << resetErr; exit(5); }
 	ofstream outFile(outFileName.c_str());
@@ -589,53 +600,75 @@ string map_ids(const string fileName, const string mapID){
 			continue;
 		}
 		IDs.push_back(ID);
-		IDsBuff.push_back(ID);
 	}
-	CURL* c = curl_easy_init();
-	CURLcode err;
+
 	cout << "Mapping " << mapID << " entries from " << fileName << " to UniProt Accession (ACC)" << endl;
 	for(int i=0; i<IDs.size(); i++){
-		FILE *tmpFile = fopen(tmpFileName.c_str(), "w");
-			check_permission(tmpFile, "  Permission denied for saving .tmp in folder of ID file.\n");
-		url = "http://www.uniprot.org/uniprot/?query=" + filters + mapID + ":" + IDs[i] + "&columns=id&format=tab";  // format: tab separated colums of protein ID and function. Accession:xxx to end 'OR' string
-		curl_easy_setopt(c, CURLOPT_URL, url.c_str() );
-		curl_easy_setopt(c, CURLOPT_WRITEDATA, tmpFile);
-		err = curl_easy_perform(c);
-		if(err){ cerr << redErr << "Error: online service not reachable. Try later." << endl << resetErr; exit(1); }
-		cerr << boost::format("%5d/%d\t%3.2f%%\r") % (i+1) % IDs.size() % ((i+1)*double(100)/IDs.size());
-		fclose(tmpFile);
-		ifstream tmpStream(tmpFileName.c_str());
-			if(! tmpStream){ cerr << redErr << "  Error reading temporary background file: " << tmpFileName << endl << resetErr; exit(5); }
-		int n = 0;
-		moreIDs.clear();
-		while(tmpStream >> newID){
-			if(newID == "Entry"){ continue; } 	// ignore header
-			n++;
-			moreIDs.push_back(newID);		// save IDs to check if ambiguous mapping
-			if(n != 1){ continue; }
-			IDsBuff.erase(remove(IDsBuff.begin(), IDsBuff.end(), IDs[i]), IDsBuff.end());
-			if( find(newIDs.begin(), newIDs.end(), newID) != newIDs.end()){	// prevent double entries
-				cout << "  Found maped-to ACC entry \"" << ID << "\" multiple times. It will only be mapped to once." << endl;
-				continue;
+		IDstring = IDstring + IDs[i] + ",";
+		IDsBuff.push_back(IDs[i]);
+		if((i+1)%50==0 || i==IDs.size()-1){
+			FILE *tmpFile = fopen(tmpFileName.c_str(), "w");
+				check_permission(tmpFile, "  Permission denied for saving .tmp in folder of ID file.\n");
+			c = curl_easy_init();
+			url = "http://www.uniprot.org/mapping/?from=" + mapID + "&to=ACC&format=tab&query=" + IDstring;	// gene id mapping
+			curl_easy_setopt(c, CURLOPT_URL, url.c_str() );
+			curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);				// only interested in redirect
+			curl_easy_setopt(c, CURLOPT_WRITEFUNCTION, write_data);				// prevent unused output
+			err = curl_easy_perform(c);
+				if(err){ cerr << redErr << "  Error: online service not reachable. Try later." << endl << resetErr; exit(1); }
+			err = curl_easy_getinfo(c, CURLINFO_EFFECTIVE_URL, &redUrl);
+				if(err){ cerr << redErr << "  Error: online service not reachable. Try later." << endl << resetErr; exit(1); }
+			if(boost::regex_search(string(redUrl), match, exp)){
+				list = string(match[1].first, match[1].second);							// get uniprot list string
+			} else { cerr << "Error: could not resolve UniProt mapping request. Try again later." << endl; exit(0);} 
+
+			c = curl_easy_init();
+			url = "http://www.uniprot.org/uniprot/?query=yourlist%3A" + list + filters + "&format=tab&columns=yourlist(" + list + "),id&sort=yourlist:" + list; // use uniprot list as reference for filtering, output with column of mapped-from ID and sort for it
+			curl_easy_setopt(c, CURLOPT_URL, url.c_str() );
+			curl_easy_setopt(c, CURLOPT_FOLLOWLOCATION, 1L);
+			curl_easy_setopt(c, CURLOPT_WRITEDATA, tmpFile);
+			err = curl_easy_perform(c);
+				if(err){ cerr << redErr << "  Error: online service not reachable. Try later." << endl << resetErr; exit(1); }
+			fclose(tmpFile);
+
+			ifstream tmpStream(tmpFileName.c_str());
+				if(! tmpStream){ cerr << redErr << "  Error reading temporary background file: " << tmpFileName << endl << resetErr; exit(5); }
+			while(getline(tmpStream, line)){
+				istringstream lineStream(line);
+				if(line.substr(0,8) == "yourlist"){ continue; } 						// ignore header
+				lineStream >> ID1 >> ID2;
+				IDsBuff.erase(remove(IDsBuff.begin(), IDsBuff.end(), ID1), IDsBuff.end());
+				if(ID1 != currentID){
+					if(currentMaps.size() > 1){
+						cout << "  Supplied ID \"" << currentID << "\" of type \"" << mapID << "\" is ambiguous and has multiple entries (first will be picked): " << boost::algorithm::join(currentMaps, "; ") << endl;
+						filterMessage = true;
+					}
+					if(currentMaps.size() > 0){ outFile << currentMaps[0] << endl; }						// write mapped ID file
+					currentID = ID1;
+					currentMaps.clear();
+				}
+				currentMaps.push_back(ID2);
 			}
-			newIDs.push_back(newID);
-		}
-		tmpStream.close();
-		if(moreIDs.size() > 1){
-			cout << "  Supplied ID \"" << IDs[i] << "\" of type \"" << mapID << "\" is ambiguous and has multiple entries: " << boost::algorithm::join(moreIDs, ", ") << endl;
-			addFilter = true;
+			if(currentMaps.size() > 1){
+				cout << "  Supplied ID \"" << currentID << "\" of type \"" << mapID << "\" is ambiguous and has multiple entries: " << boost::algorithm::join(currentMaps, "; ") << endl;
+				filterMessage = true;
+			}
+			if(currentMaps.size() > 0){ outFile << currentMaps[0] << endl; }						// write mapped ID file
+			currentMaps.clear();
+
+			if(IDsBuff.size()>0){
+				cout << "  " << IDsBuff.size() << " identifiers could not be mapped to UniProt ACC: " << boost::algorithm::join(IDsBuff, "; ") << endl;;
+			}
+			
+			cerr << boost::format("%5d/%d\t%3.2f%%\r") % (i+1) % IDs.size() % ((i+1)*double(100)/IDs.size()); 	// display progress
+			IDstring = "";
+			IDsBuff.clear();
 		}
 	}
-	cerr << "\r" << endl;
-	for(int i=0; i<newIDs.size(); i++){ outFile << newIDs[i] << endl; } 	// write to file
-	if(IDsBuff.size() != 0){
-		cout << IDsBuff.size() << " element(s) could not be mapped to UniProt IDs (ACC):\n";
-		for(int i=0; i<IDsBuff.size(); i++){ cout << IDsBuff[i] << '\t'; }
-		cout << endl;
-	}
-	if(addFilter){ cout << "Ambiguous entries occured. Maybe add filters in header of ID file? See --help." << endl;}
+	curl_easy_cleanup(c);
 	remove(tmpFileName.c_str());
 	outFile.close();
+	if(filterMessage){ cout << "Ambiguous entries occured. Maybe add filters in header of ID file? See --help." << endl;}
 	cout << "Created file: " << outFileName << endl;
 	return outFileName;
 }
