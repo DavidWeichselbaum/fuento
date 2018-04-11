@@ -202,7 +202,7 @@ const string current_date(){
 }
 
 void create_background(const string nameBackIDs, string nameBack, const string backListFileName="", const string column=""){
-	string ID, function, url, line;
+	string database, ID, symbol, qualifier, function, url, line;
 	string currentID = "";
 	string IDlist = "";
 	string tmpFileName = nameBack + ".tmp";
@@ -213,6 +213,7 @@ void create_background(const string nameBackIDs, string nameBack, const string b
 		check_permission(tmpFile, "  Permission denied for saving .tmp in folder of ID file.\n");
 	realpath(outFileName.c_str(), fullOutFilePath);
 	CURL* c = curl_easy_init();
+    struct curl_slist *chunk = NULL;
 	CURLcode err;
 	ifstream file(nameBackIDs.c_str());
 		if(! file){ cerr << redErr << "  Error reading background-ID file: " << nameBackIDs << endl << resetErr; exit(5); }
@@ -229,7 +230,10 @@ void create_background(const string nameBackIDs, string nameBack, const string b
 			IDlist = IDlist + IDs[i];
 			IDlist = IDlist + ',';
 			if((i+1)%100==0 || i==IDs.size()-1){
-				url = "https://www.ebi.ac.uk/QuickGO/GAnnotation?protein=" + IDlist + "&format=tsv&col=proteinID,goID";  // format: tab separated column of protein ID and genontology ID
+                IDlist.pop_back(); // remove last comma
+				url = "https://www.ebi.ac.uk/QuickGO/services/annotation/downloadSearch?geneProductId=" + IDlist; // format: tab separated column of protein ID and information
+                chunk = curl_slist_append(chunk, "Accept: text/tsv");
+                curl_easy_setopt(c, CURLOPT_HTTPHEADER, chunk);
 				curl_easy_setopt(c, CURLOPT_URL, url.c_str() );
 				curl_easy_setopt(c, CURLOPT_WRITEDATA, tmpFile);
 				err = curl_easy_perform(c);
@@ -257,12 +261,13 @@ void create_background(const string nameBackIDs, string nameBack, const string b
 	}
 	cerr << "\r" << endl;
 	curl_easy_cleanup(c);
+    curl_slist_free_all(chunk);
 	fclose(tmpFile);	
 	ifstream tmpStream(tmpFileName.c_str());
 		if(! tmpStream){ cerr << redErr << "  Error reading temporary background file: " << tmpFileName << endl << resetErr; exit(5); }
 	while(getline(tmpStream, line)){
 		istringstream lineStream(line);
-		lineStream >> ID;
+		lineStream >> database >> ID >> symbol >> qualifier >> function;
 		if(ID != currentID){								// if first annotation for this ID
   			if (find (IDs.begin(), IDs.end(), ID) != IDs.end()){			// ignore every line not headed by input ID
 				if(currentID != ""){ outStream << '\n';}
@@ -272,9 +277,7 @@ void create_background(const string nameBackIDs, string nameBack, const string b
 			}
 		}
 		if(ID == currentID){			// intentionally new condition
-			while(getline(lineStream, function, ',')){
-			boost::trim_left(function);
-			outStream << '\t' << function; }
+			outStream << '\t' << function;
 		}
 	}
 	outStream << endl;
