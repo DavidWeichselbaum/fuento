@@ -202,6 +202,7 @@ const string current_date(){
 }
 
 void create_background(const string nameBackIDs, string nameBack, const string backListFileName="", const string column=""){
+    long http_code = 0;
 	string database, ID, symbol, qualifier, function, url, line;
 	string currentID = "";
 	string IDlist = "";
@@ -237,7 +238,9 @@ void create_background(const string nameBackIDs, string nameBack, const string b
 				curl_easy_setopt(c, CURLOPT_URL, url.c_str() );
 				curl_easy_setopt(c, CURLOPT_WRITEDATA, tmpFile);
 				err = curl_easy_perform(c);
+                curl_easy_getinfo(c, CURLINFO_RESPONSE_CODE, &http_code);
 				if(err){ cerr << redErr << "  Error: online service not reachable. Try later." << endl << resetErr; exit(1); }
+                if(http_code != 200){ cerr << redErr << "  Error: online service returned code " << http_code << endl << resetErr; exit(1); }
 				IDlist = "";
 				cerr << boost::format("%5d/%d\t%3.2f%%\r") % (i+1) % IDs.size() % ((i+1)*double(100)/IDs.size());
 			}
